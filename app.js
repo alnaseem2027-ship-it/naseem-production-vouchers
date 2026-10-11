@@ -104,6 +104,11 @@ function startVouchersListener(){
     /* لا نُعيد رسم شاشة سند مفتوح حالياً حتى لا نقطع تعديلاً قيد الكتابة؛
        فقط نحدّث قائمة السندات وشاشة المستخدمين إن كانتا الشاشة الحالية */
     if(location.hash==='#/list'&&!V)viewList();
+    /* المدير يعرض سند موظف للقراءة فقط: نحدّث العرض لحظياً بآخر نسخة */
+    else if(V&&VIEWONLY&&location.hash==='#/v/'+V.id){
+      const f=VOUCHERS.find(x=>x.id===V.id);
+      if(f&&f.updated!==V.updated&&!$('dialog[open]')){V=f;VOWNERUID=f.ownerUid;viewVoucher(f.id)}
+    }
   },err=>{toast('تعذّر مزامنة السندات: '+(err&&err.message||''))});
 }
 function stopVouchersListener(){if(unsubVouchers){unsubVouchers();unsubVouchers=null}VOUCHERS=[]}
@@ -123,9 +128,9 @@ function header(){
   const isAdmin=USER.role==='admin';
   return `<div class="top"><img src="img/logo-word.png" alt="النسيم إخوان"><h1>سندات الإنتاج</h1><div class="sp"></div>
   <button class="btn" onclick="QA.go('#/list')">السندات</button>
-  <button class="btn" onclick="QA.go('#/catalog')">الكتالوج</button>
-  ${isAdmin?`<button class="btn" onclick="QA.go('#/users')">المستخدمون</button>`:''}
-  <button class="btn" onclick="QA.backup()">نسخة احتياطية</button>
+  ${isAdmin?`<button class="btn" onclick="QA.go('#/catalog')">الكتالوج</button>
+  <button class="btn" onclick="QA.go('#/users')">المستخدمون</button>
+  <button class="btn" onclick="QA.backup()">نسخة احتياطية</button>`:''}
   <span class="chip">${esc(USER.name||USER.email)}${isAdmin?' · مدير':''}</span>
   <button class="btn" onclick="QA.changePw()">كلمة المرور</button>
   <button class="btn" onclick="QA.logout()">خروج</button></div>`;
@@ -164,7 +169,8 @@ function loginErr(err){
   return 'تعذّر تسجيل الدخول: '+(err&&err.message||'');
 }
 async function logout(){
-  await closeVoucher();          // يحفظ السند المفتوح ثم يغلقه
+  if(V&&dirty)await Promise.race([persist(),sleep(4000)]);   // نحفظ آخر تعديل قبل الخروج
+  closeVoucher();
   stopVouchersListener();
   try{await signOut(auth)}catch(e){}
   listQ='';
@@ -196,81 +202,155 @@ function viewList(){
   const vs=loadV().sort((a,b)=>(b.updated||0)-(a.updated||0));
   const q=listQ.trim().toLowerCase();
   const rows=vs.filter(v=>!q||(`${v.no} ${v.mo} ${v.customer} ${v.byName||''}`).toLowerCase().includes(q));
-  const lb=jget(BK(USER.u),0),stale=vs.length&&(Date.now()-lb>7*864e5);
+  const lb=jget(BK(USER.u),0),stale=isAdmin&&vs.length&&(Date.now()-lb>7*864e5);
   $('#app').innerHTML=header()+`<div class="wrap">
   ${stale?`<div class="note warnbox">${lb?'مرّ أكثر من أسبوع على آخر نسخة احتياطية.':'لم تُصدَّر أي نسخة احتياطية بعد.'} السندات محفوظة أونلاين، لكن النسخة الاحتياطية تبقى مفيدة كأرشيف خارجي. <button class="btn sm" onclick="QA.expBackup()">صدّر نسخة الآن</button></div>`:''}
   <div class="bar"><h2 style="margin:0">السندات</h2><span class="sp"></span>
   <input type="search" id="lq" placeholder="🔍 بحث برقم السند أو MO أو الزبون${isAdmin?' أو المستخدم':''}" style="max-width:320px" value="${esc(listQ)}">
   <button class="btn pri" onclick="QA.newV()">+ سند جديد</button></div>
   <div class="card" style="padding:6px 12px;overflow-x:auto"><table><thead><tr><th>رقم السند</th>${isAdmin?'<th>المستخدم</th>':''}<th>MO</th><th>التاريخ</th><th>الزبون</th><th>الأبواب</th><th>الأسطر</th><th>الحالة</th><th>آخر تعديل</th><th></th></tr></thead><tbody>
-  ${rows.length?rows.map(v=>{const nl=v.doors.reduce((s,d)=>s+d.rows.length,0);return `<tr><td><b class="code" style="color:var(--ink)">${esc(v.no)}</b></td>${isAdmin?`<td>${esc(v.byName||'')}</td>`:''}<td class="code">${esc(v.mo)}</td><td>${esc(v.date)}</td><td>${esc(v.customer)}</td><td>${v.doors.length}</td><td>${nl}</td>
-  <td><span class="badge ${v.status==='done'?'ok':'d'}">${v.status==='done'?'مكتمل 🔒':'مسودة'}</span></td><td>${v.updated?new Date(v.updated).toLocaleString('ar',{dateStyle:'short',timeStyle:'short'}):''}</td>
-  <td style="white-space:nowrap"><button class="btn sm" onclick="QA.go('#/v/${v.id}')">فتح</button> <button class="btn sm danger" onclick="QA.delV('${v.id}')">حذف</button></td></tr>`}).join(''):`<tr><td colspan="${isAdmin?10:9}" class="empty">${vs.length?'لا نتائج مطابقة.':'لا توجد سندات بعد. اضغط «سند جديد» للبدء.'}</td></tr>`}
+  ${rows.length?rows.map(v=>{const nl=v.doors.reduce((s,d)=>s+d.rows.length,0);return `<tr class="clk" onclick="QA.go('#/v/${v.id}')"><td><b class="code" style="color:var(--ink)">${esc(v.no)}</b></td>${isAdmin?`<td>${esc(v.byName||'')}</td>`:''}<td class="code">${esc(v.mo)}</td><td>${esc(v.date)}</td><td>${esc(v.customer)}</td><td>${v.doors.length}</td><td>${nl}</td>
+  <td><span class="badge ${v.status==='done'?'ok':'d'}">${v.status==='done'?'معتمد 🔒':'مسودة'}</span></td><td>${v.updated?new Date(v.updated).toLocaleString('ar',{dateStyle:'short',timeStyle:'short'}):''}</td>
+  <td style="white-space:nowrap"><button class="btn sm">فتح</button></td></tr>`}).join(''):`<tr><td colspan="${isAdmin?10:9}" class="empty">${vs.length?'لا نتائج مطابقة.':'لا توجد سندات بعد. اضغط «سند جديد» للبدء.'}</td></tr>`}
   </tbody></table></div></div>`;
   $('#lq').oninput=e=>{listQ=e.target.value;const p=e.target.selectionStart;viewList();const n=$('#lq');n.focus();n.setSelectionRange(p,p)};
 }
-async function newV(){
-  const v={id:uid(),no:nextNo(myVouchers()),mo:'',date:today(),customer:'',status:'draft',ownerUid:USER.u,by:USER.u,byName:USER.name||USER.email,doors:[{id:uid(),name:'باب 1',rows:[]}],created:Date.now(),updated:Date.now()};
-  VOUCHERS.push(v);
-  location.hash='#/v/'+v.id;
-  try{await setDoc(doc(db,'vouchers',v.id),v)}catch(e){toast('تعذّر إنشاء السند: '+(e&&e.message||''))}
+/* ---------- إنشاء وحذف السند ----------
+   «سند جديد» يفتح نموذجاً فارغاً في الذاكرة فقط؛ لا يُنشأ في قاعدة البيانات ولا يظهر في القائمة
+   إلا بعد أول تعديل فعلي. ويُحدَّد رقمه لحظة أول حفظ (لا لحظة الضغط) حتى لا يتكرر. */
+let NEWV=null;
+const amAdmin=()=>!!USER&&USER.role==='admin';
+const isNewV=()=>!!V&&V===NEWV;
+const vHash=v=>v===NEWV?'#/v/new':'#/v/'+v.id;
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+function newV(){
+  NEWV={id:uid(),no:'',mo:'',date:today(),customer:'',status:'draft',ownerUid:USER.u,by:USER.u,byName:USER.name||USER.email,doors:[{id:uid(),name:'باب 1',rows:[]}],created:Date.now(),updated:Date.now()};
+  if(location.hash==='#/v/new')route();else location.hash='#/v/new';
 }
-async function delV(id){
-  const k=VOUCHERS.findIndex(x=>x.id===id);if(k<0)return;
-  const v=VOUCHERS[k];
-  if(v.status==='done'&&!confirm('السند '+v.no+' مكتمل. هل تريد حذفه فعلاً؟'))return;
-  VOUCHERS.splice(k,1);viewList();
-  try{await deleteDoc(doc(db,'vouchers',id))}catch(e){toast('تعذّر الحذف: '+(e&&e.message||''));VOUCHERS.splice(k,0,v);viewList();return}
+/* الحذف من داخل السند فقط، وبتأكيد دائماً. السند المعتمد لا يحذفه إلا المدير. */
+async function delV(){
+  if(!V)return;
+  const v=V;
+  if(isNewV()){
+    if(dirty&&!confirm('إلغاء هذا السند الجديد وما أدخلته فيه؟'))return;
+    closeVoucher(true);location.hash='#/list';toast('أُلغي السند الجديد');return;
+  }
+  if(v.status==='done'&&!amAdmin()){toast('السند المعتمد لا يحذفه إلا المدير');return}
+  if(!confirm('حذف السند '+v.no+(v.status==='done'?' (معتمد)':'')+' نهائياً؟'))return;
+  closeVoucher(true);              // نُلغي أي حفظ معلّق حتى لا يُعاد إنشاء السند بعد حذفه
+  const k=VOUCHERS.findIndex(x=>x.id===v.id);if(k>=0)VOUCHERS.splice(k,1);
+  location.hash='#/list';
+  try{await deleteDoc(doc(db,'vouchers',v.id))}catch(e){
+    toast('تعذّر الحذف: '+(e&&e.message||''));
+    if(!VOUCHERS.some(x=>x.id===v.id))VOUCHERS.push(v);if(location.hash==='#/list'&&!V)viewList();return;
+  }
   toast('حُذف السند '+v.no,async()=>{
-    VOUCHERS.push(v);viewList();
+    if(!VOUCHERS.some(x=>x.id===v.id))VOUCHERS.push(v);if(location.hash==='#/list'&&!V)viewList();
     try{await setDoc(doc(db,'vouchers',v.id),v);toast('أُعيد السند')}catch(e){toast('تعذّر استرجاع السند: '+(e&&e.message||''))}
   },10000);
 }
 
 /* ---------- شاشة السند ---------- */
-let V=null,VOWNERUID=null,T=0,SM='sum',saveTimer=null,dirty=false;
+let V=null,VOWNERUID=null,T=0,SM='sum',saveTimer=null,retryT=null,dirty=false,VIEWONLY=false,SAWTOT=false;
 const ES={cat:'',comp:'',code:'',q:''};
-const locked=()=>V&&V.status==='done';
+/* مقفل = معتمد، أو سند موظف يعرضه المدير للقراءة فقط */
+const locked=()=>!!V&&(V.status==='done'||VIEWONLY);
+
+/* الحفظ: dirty تعني «تعديل لم يُسلَّم بعد لـ Firebase». بعد التسليم يتكفّل Firebase بإيصاله
+   حتى لو انقطع الاتصال مؤقتاً (ما دامت الصفحة مفتوحة)، لذلك نُظهر تنبيهاً إن طال الانتظار. */
 async function persist(){
   clearTimeout(saveTimer);
-  if(!V||!VOWNERUID){dirty=false;return}
-  V.updated=Date.now();V.ownerUid=VOWNERUID;
+  const v=V;
+  if(!v||!VOWNERUID||VIEWONLY){dirty=false;return}
+  if(v===NEWV){
+    if(!dirty)return;                                   // سند جديد لم يُكتب فيه شيء: لا يُنشأ
+    if(!String(v.no||'').trim())v.no=nextNo(myVouchers());
+    NEWV=null;if(!VOUCHERS.includes(v))VOUCHERS.push(v);
+    if(location.hash==='#/v/new'){
+      history.replaceState(null,'','#/v/'+v.id);
+      document.title='سند '+v.no+' — سندات الإنتاج';
+      const ni=$('.meta [data-m="no"]');if(ni)ni.value=v.no;
+      const st=$('#vstatus');if(st){st.textContent='مسودة';st.className='unit'}
+    }
+  }
+  v.updated=Date.now();v.ownerUid=VOWNERUID;
+  dirty=false;setSave('saving');
+  const slow=setTimeout(()=>{if(V===v)setSave('slow')},6000);
   try{
-    await setDoc(doc(db,'vouchers',V.id),V);
-    dirty=false;const s=$('#saved');if(s)s.textContent='✓ تم الحفظ '+hhmm();
-  }catch(e){const s=$('#saved');if(s)s.textContent='⚠ تعذّر الحفظ';toast('تعذّر الحفظ: '+(e&&e.message||''))}
+    await setDoc(doc(db,'vouchers',v.id),v);
+    clearTimeout(slow);
+    if(V===v&&!dirty)setSave('ok');
+  }catch(e){
+    clearTimeout(slow);
+    if(V===v){
+      dirty=true;setSave('err',e);
+      if(!(e&&e.code==='permission-denied')){clearTimeout(retryT);retryT=setTimeout(()=>{if(V===v&&dirty)persist()},8000)}
+    }else toast('تعذّر حفظ آخر تعديل على السند '+(v.no||'')+': '+(e&&e.message||''));
+  }
 }
-function autosave(){dirty=true;const s=$('#saved');if(s)s.textContent='جارٍ الحفظ…';clearTimeout(saveTimer);saveTimer=setTimeout(persist,400)}
+function autosave(){dirty=true;setSave('saving');clearTimeout(saveTimer);saveTimer=setTimeout(persist,400);drawSteps()}
 async function flush(){if(dirty)await persist()}
-async function closeVoucher(){await flush();clearTimeout(saveTimer);V=null;VOWNERUID=null}
-/* حفظ عند إغلاق الصفحة أو إخفائها (محاولة بأفضل جهد) */
+/* إغلاق السند المفتوح: يبدأ حفظ أي تعديل معلّق ثم يُغلق فوراً.
+   (سابقاً كان الإغلاق ينتظر الحفظ ثم يمسح السند — فيمسح السند الذي فُتح للتو،
+   وهذا ما عطّل «إضافة» و«+ باب جديد» وحقول MO والزبون.) */
+function closeVoucher(discard){
+  if(!V)return;
+  if(!discard&&dirty)persist();
+  clearTimeout(saveTimer);clearTimeout(retryT);
+  if(V===NEWV)NEWV=null;
+  V=null;VOWNERUID=null;VIEWONLY=false;dirty=false;
+}
+function setSave(st,err){
+  const s=$('#saved'),b=$('#savebar');
+  if(s){
+    s.className='saved '+st;
+    s.textContent={saving:'جارٍ الحفظ…',ok:'✓ محفوظ '+hhmm(),new:'لم يُحفظ بعد',err:'⚠ لم يُحفظ',slow:'⚠ بانتظار الاتصال',ro:'👁 قراءة فقط',done:'✓ محفوظ'}[st]||'';
+  }
+  if(b){
+    if(st==='err'){b.hidden=false;b.textContent=(err&&err.code==='permission-denied')?'⚠ لا تملك صلاحية حفظ هذا السند. تواصل مع المدير.':'⚠ تعذّر الحفظ — تحقق من الاتصال بالإنترنت. ستُعاد المحاولة تلقائياً، لا تغلق الصفحة.'}
+    else if(st==='slow'){b.hidden=false;b.textContent='⚠ لا يوجد اتصال بالإنترنت. تعديلاتك محفوظة مؤقتاً على هذا الجهاز وستُرفع تلقائياً عند عودة الاتصال — لا تغلق الصفحة.'}
+    else if(st==='ok')b.hidden=true;
+  }
+}
+/* حفظ عند إغلاق الصفحة أو إخفائها (محاولة بأفضل جهد)، وعند عودة الاتصال */
 window.addEventListener('pagehide',()=>{if(dirty)persist()});
 window.addEventListener('beforeunload',()=>{if(dirty)persist()});
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden'&&dirty)persist()});
+window.addEventListener('online',()=>{if(dirty)persist()});
 
 function viewVoucher(id){
-  if(!V||V.id!==id){
+  const target=id==='new'?NEWV:(V&&V.id===id?V:VOUCHERS.find(v=>v.id===id));
+  if(!target){location.hash='#/list';return}
+  if(V!==target){
     closeVoucher();
-    V=VOUCHERS.find(v=>v.id===id)||null;
-    if(!V){location.hash='#/list';return}
-    VOWNERUID=V.ownerUid;T=0;ES.q='';
+    V=target;VOWNERUID=V.ownerUid;T=0;ES.q='';SAWTOT=false;
+    VIEWONLY=amAdmin()&&V.ownerUid!==USER.u;          // سند موظف: قراءة فقط حتى يضغط المدير «تعديل»
     if(!V.doors.length)V.doors.push({id:uid(),name:'باب 1',rows:[]});
     V.doors.forEach(d=>d.rows.forEach(r=>{if(!r.x){const i=byCode(r.c);if(i)r.x=snapOf(i)}}));
   }
-  document.title='سند '+V.no+' — سندات الإنتاج';
-  const L=locked();
+  const NEW=isNewV(),ADM=amAdmin(),done=V.status==='done',L=locked();
+  document.title=(NEW?'سند جديد':'سند '+V.no)+' — سندات الإنتاج';
   $('#app').innerHTML=header()+`<div class="wrap">
-  <div class="bar"><button class="btn" onclick="QA.go('#/list')">→ السندات</button><span class="sp"></span>${USER.role==='admin'&&V.byName?`<span class="chip">صاحب السند: ${esc(V.byName)}</span>`:''}<span class="saved" id="saved"></span>
-   <button class="btn" onclick="QA.save()">حفظ</button><button class="btn" onclick="QA.print(false)">طباعة</button><button class="btn" onclick="QA.print(true)">PDF</button><button class="btn pri" onclick="QA.exportX()">تصدير Excel</button></div>
-  ${L?`<div class="note lockbox">🔒 هذا السند <b>مكتمل ومقفل</b>. بياناته ثابتة ولا تتأثر بتعديل الكتالوج. <button class="btn sm" onclick="QA.reopen()">إعادة فتح للتعديل</button></div>`:''}
+  <div class="bar"><button class="btn" onclick="QA.go('#/list')">→ السندات</button><span class="saved" id="saved"></span><span class="sp"></span>
+   ${ADM&&V.byName?`<span class="chip">صاحب السند: ${esc(V.byName)}</span>`:''}
+   <button class="btn" onclick="QA.print(false)">طباعة</button><button class="btn" onclick="QA.print(true)">PDF</button><button class="btn" onclick="QA.exportX()">تصدير Excel</button></div>
+  <div class="savebar" id="savebar" hidden></div>
+  ${done?`<div class="note lockbox">🔒 هذا السند <b>معتمد ومقفل</b>. بياناته ثابتة ولا تتأثر بتعديل الكتالوج. ${ADM?`<button class="btn sm" onclick="QA.reopen()">إعادة فتح للتعديل</button>`:'لتعديله تواصل مع المدير.'}</div>`
+   :VIEWONLY?`<div class="note warnbox">👁 تعرض سند <b>${esc(V.byName||'')}</b> للقراءة فقط. <button class="btn sm" onclick="QA.editOther()">تعديل هذا السند</button></div>`:''}
+  ${L?'':`<div class="steps" id="steps"></div>`}
   <div class="meta">
-   <div><label class="l">رقم السند</label><input data-m="no" value="${esc(V.no)}" ${L?'disabled':''} style="direction:ltr;text-align:right"></div>
-   <div><label class="l">رقم أمر التصنيع MO</label><input data-m="mo" value="${esc(V.mo)}" ${L?'disabled':''} style="direction:ltr;text-align:right" placeholder="MO21-00000"></div>
+   <div><label class="l">رقم السند</label><input data-m="no" value="${esc(V.no)}" ${L||!ADM?'disabled':''} placeholder="يُحدَّد تلقائياً عند الحفظ" style="direction:ltr;text-align:right"></div>
+   <div><label class="l">رقم أمر التصنيع MO <b class="req">*</b></label><input data-m="mo" value="${esc(V.mo)}" ${L?'disabled':''} style="direction:ltr;text-align:right" placeholder="MO21-00000"></div>
    <div><label class="l">التاريخ</label><input type="date" data-m="date" value="${esc(V.date)}" ${L?'disabled':''}></div>
    <div><label class="l">الزبون</label><input data-m="customer" value="${esc(V.customer)}" ${L?'disabled':''} placeholder="اختياري"></div>
-   <div><label class="l">الحالة</label>${L?`<div class="unit" style="color:var(--ok)">مكتمل 🔒</div>`:`<button class="btn" style="width:100%" onclick="QA.markDone()">✓ تعليم كمكتمل</button>`}</div>
+   <div><label class="l">الحالة</label><div class="unit ${done?'st-done':NEW?'st-new':''}" id="vstatus">${done?'معتمد 🔒':NEW?'جديد — لم يُحفظ':'مسودة'}</div></div>
   </div>
-  <div class="tabs" id="tabs"></div><div class="card panel" id="panel"></div></div>`;
+  <div class="tabs" id="tabs"></div><div class="card panel" id="panel"></div>
+  ${!L?`<div class="actions"><button class="btn danger" onclick="QA.delV()">${NEW?'إلغاء السند':'حذف السند'}</button><span class="sp"></span>
+    <button class="btn" onclick="QA.saveDraft()">حفظ كمسودة والعودة</button><button class="btn pri" onclick="QA.markDone()">✓ حفظ واعتماد</button></div>`
+   :ADM?`<div class="actions"><button class="btn danger" onclick="QA.delV()">حذف السند</button><span class="sp"></span><button class="btn" onclick="QA.go('#/list')">→ رجوع إلى السندات</button></div>`:''}
+  </div>`;
+  setSave(VIEWONLY?'ro':NEW&&!dirty?'new':done?'done':dirty?'saving':'ok');
   $('.meta').oninput=e=>{
     const k=e.target.dataset.m;if(!k||locked())return;
     V[k]=e.target.value;
@@ -280,14 +360,33 @@ function viewVoucher(id){
   if(T!=='t'&&T>=V.doors.length)T=0;
   drawAll();
 }
-function drawAll(){drawTabs();drawPanel()}
+/* شريط الخطوات للموظف الجديد */
+function drawSteps(){
+  const el=$('#steps');if(!el||!V)return;
+  const rows=V.doors.reduce((s,d)=>s+d.rows.length,0),miss=V.doors.reduce((s,d)=>s+d.rows.filter(r=>missingLen(r)).length,0);
+  const st=[[!!String(V.mo||'').trim()&&!!V.date,'اكتب رقم MO والتاريخ'],[rows>0&&!miss,'أضف أصناف كل باب'],[SAWTOT,'راجع تبويب «الإجمالي»'],[V.status==='done','اضغط «حفظ واعتماد»']];
+  el.innerHTML=st.map(([ok,t],k)=>`<span class="step ${ok?'ok':''}">${ok?'✓':'①②③④'[k]} ${t}</span>`).join('<span class="arr">←</span>');
+}
+function saveDraft(){
+  if(!V)return;
+  if(isNewV()&&!dirty){closeVoucher(true);location.hash='#/list';toast('لم يُحفظ شيء — السند كان فارغاً');return}
+  if(dirty)persist();               // يحدد رقم السند الجديد فوراً ويبدأ الحفظ
+  const no=V.no;
+  toast('حُفظ السند '+no+' كمسودة');location.hash='#/list';
+}
+function editOther(){
+  if(!V||!VIEWONLY)return;
+  if(!confirm('فتح سند '+(V.byName||'')+' للتعديل؟\n\nتأكد أن صاحبه لا يعمل عليه الآن، وإلا قد يمسح حفظُ أحدكما تعديلاتِ الآخر.'))return;
+  VIEWONLY=false;viewVoucher(V.id);
+}
+function drawAll(){drawTabs();drawPanel();drawSteps()}
 function drawTabs(){
   $('#tabs').innerHTML=V.doors.map((d,i)=>{const m=d.rows.filter(r=>missingLen(r)).length;return `<button class="tab ${i===T?'on':''}" title="${esc(d.name)}" onclick="QA.tab(${i})">${esc(d.name||'باب '+(i+1))}${m?' <span class="dot" title="أسطر بلا طول">●</span>':''}</button>`}).join('')
    +(locked()?'':`<button class="tab add" onclick="QA.addDoor()">+ باب جديد</button>`)+`<button class="tab tot ${T==='t'?'on':''}" onclick="QA.tab('t')">الإجمالي</button>`;
 }
 function drawPanel(){
   const p=$('#panel');if(!p)return;
-  if(T==='t'){p.innerHTML=totalsHTML();return}
+  if(T==='t'){SAWTOT=true;p.innerHTML=totalsHTML();return}
   const d=V.doors[T],L=locked();
   p.innerHTML=`<div class="doorname"><label class="l" style="margin:0">وصف الباب:</label><input id="dn" value="${esc(d.name)}" ${L?'disabled':''} placeholder="مثال: باب رول بطن (كريم 1013)">
    ${L?'':`<button class="btn danger" onclick="QA.delDoor()">حذف الباب</button>`}</div>
@@ -320,9 +419,9 @@ function drawEntry(){
    <div><label class="l">الفئة</label><select id="ec" ${ES.q?'disabled':''}>${opts(cats,ES.cat)}</select></div>
    <div><label class="l">المكوّن</label><select id="em" ${ES.q?'disabled':''}>${opts(comps,ES.comp)}</select></div>
    <div><label class="l">التفصيل ${ES.q?`(${dets.length} نتيجة)`:''}</label><select id="ed">${detOpts(dets,ES.code)}</select></div>
-   <div><label class="l">الوحدة</label><div class="unit ${it&&it.sg?'sug':''}">${it?esc(it.u):'--'}${it&&it.sg?' *':''}</div></div>
+   <div><label class="l">الوحدة</label><div class="unit ${it&&it.sg&&amAdmin()?'sug':''}">${it?esc(it.u):'--'}${it&&it.sg&&amAdmin()?' *':''}</div></div>
    <div><label class="l">${it&&kindU(it.u)==='a'?'الكمية':'العدد'}</label><input id="en" inputmode="decimal" autocomplete="off" value="1"></div>
-   <div><label class="l">الطول (م)${len?' <span style="font-weight:400">اختياري</span>':''}</label><input id="el" inputmode="decimal" autocomplete="off" ${len?'':'disabled placeholder="—"'}></div>
+   <div><label class="l">الطول (م)${len?' <b class="req">*</b>':''}</label><input id="el" inputmode="decimal" autocomplete="off" ${len?'placeholder="مطلوب"':'disabled placeholder="—"'}></div>
    <div><button class="btn pri" id="eadd">إضافة ↵</button></div></div>`;
   $('#ec').onchange=e=>{ES.cat=e.target.value;ES.comp='';drawEntry()};
   $('#em').onchange=e=>{ES.comp=e.target.value;drawEntry()};
@@ -335,13 +434,14 @@ function addRow(){
   const n=parseNum($('#en').value);
   if(!(n>0)){toast('أدخل عدداً صحيحاً أكبر من صفر');$('#en').focus();return}
   const len=kindU(it.u)==='m';
-  let l=len?parseNum($('#el').value):0;if(l===null)l=0;
-  if(isNaN(l)||l<0){toast('الطول غير صالح');$('#el').focus();return}
+  let l=len?parseNum($('#el').value):0;
+  if(len&&!(l>0)){toast(l===null?'أدخل الطول بالمتر — مطلوب لهذا الصنف':'الطول غير صالح');$('#el').focus();return}
+  if(!len)l=0;
   const rows=V.doors[T].rows;
   const ex=rows.find(r=>r.c===it.c&&(!len||+r.l===l));
   if(ex)ex.n=r2(+ex.n+n);else rows.push({c:it.c,n:n,l:len?l:0,x:snapOf(it)});
   drawTable();drawTabs();autosave();
-  toast(ex?'أُضيف العدد إلى السطر الموجود':(len&&!l?'تمت الإضافة — تذكّر إدخال الطول':'تمت الإضافة'));
+  toast(ex?'أُضيف العدد إلى السطر الموجود':'تمت الإضافة');
   $('#en').value='1';$('#el').value='';$('#en').focus();$('#en').select();
 }
 function drawTable(){
@@ -349,18 +449,18 @@ function drawTable(){
   const d=V.doors[T],L=locked(),rows=numbered(d.rows);
   const miss=d.rows.filter(r=>missingLen(r)).length;
   el.innerHTML=`<div style="overflow-x:auto"><table><thead><tr><th>م</th><th>الكود</th><th>الصنف</th><th>الوحدة</th><th>العدد</th><th>الطول (م)</th><th>الكمية</th>${L?'':'<th></th>'}</tr></thead><tbody>
-  ${rows.length?rows.map(({r,idx,n})=>{const x=info(r),len=kindU(x.u)==='m',ml=len&&!(+r.l>0);return `<tr data-i="${idx}" class="${ml?'warnrow':''}"><td>${n}</td><td class="code">${esc(r.c)}</td><td>${x.missing?'<span class="sug-star">'+esc(x.n)+'</span>':esc(labelOf(x))}</td><td>${esc(x.u)}${x.sg?' <span class="sug-star" title="وحدة مقترحة">*</span>':''}</td>
+  ${rows.length?rows.map(({r,idx,n})=>{const x=info(r),len=kindU(x.u)==='m',ml=len&&!(+r.l>0);return `<tr data-i="${idx}" class="${ml?'warnrow':''}"><td>${n}</td><td class="code">${esc(r.c)}</td><td>${x.missing?'<span class="sug-star">'+esc(x.n)+'</span>':esc(labelOf(x))}</td><td>${esc(x.u)}${x.sg&&amAdmin()?' <span class="sug-star" title="وحدة مقترحة">*</span>':''}</td>
    <td><input inputmode="decimal" data-f="n" value="${r.n}" ${L?'disabled':''}></td>
    <td><input inputmode="decimal" data-f="l" value="${len&&+r.l?r.l:''}" ${len&&!L?'placeholder="أدخل الطول"':'disabled placeholder="—"'}></td>
    <td class="qty">${fmt(qtyOf(r))}</td>${L?'':`<td style="white-space:nowrap"><button class="x" style="color:var(--brand-t)" title="تعديل السطر" data-edit="${idx}">✎</button><button class="x" title="حذف" data-del="${idx}">✕</button></td>`}</tr>`}).join(''):`<tr><td colspan="8" class="empty">لا أصناف في هذا الباب بعد.${L?'':' اختر صنفاً من الأعلى.'}</td></tr>`}
-  </tbody></table></div><div class="foot"><span>عدد الأسطر: <b>${d.rows.length}</b></span>${miss?`<span class="warntxt">⚠ ${miss} سطر بلا طول (كميته صفر)</span>`:''}<span>* وحدة مقترحة تحتاج تأكيداً من «الكتالوج»</span></div>`;
+  </tbody></table></div><div class="foot"><span>عدد الأسطر: <b>${d.rows.length}</b></span>${miss?`<span class="warntxt">⚠ ${miss} سطر بلا طول (كميته صفر)</span>`:''}${amAdmin()?'<span>* وحدة مقترحة تحتاج تأكيداً من «الكتالوج»</span>':''}</div>`;
 }
 /* تعديل العدد والطول مباشرة في الجدول */
 document.addEventListener('input',e=>{
   const t=e.target,f=t.dataset&&t.dataset.f;if(!f||!V||T==='t'||locked())return;
   const tr=t.closest('tr'),r=V.doors[T]&&V.doors[T].rows[+tr.dataset.i];if(!r)return;
   const v=parseNum(t.value);
-  const ok=f==='n'?v>0:(v===null||v>=0);
+  const ok=f==='n'?v>0:(isLenR(r)?v>0:(v===null||v>=0));      // الطول إلزامي لأصناف المتر
   t.classList.toggle('bad',!ok);if(!ok)return;
   r[f]=v===null?0:v;
   tr.querySelector('.qty').textContent=fmt(qtyOf(r));
@@ -403,9 +503,9 @@ function editRow(idx){
      <div><label class="l">الفئة</label><select id="r_c" ${S.q?'disabled':''}>${opts(cats,S.cat)}</select></div>
      <div><label class="l">المكوّن</label><select id="r_m" ${S.q?'disabled':''}>${opts(comps,S.comp)}</select></div>
      <div class="full"><label class="l">التفصيل</label><select id="r_d">${detOpts(dets,S.code)}</select></div>
-     <div><label class="l">الوحدة</label><div class="unit ${it&&it.sg?'sug':''}">${it?esc(it.u):'--'}${it&&it.sg?' *':''}</div></div><div></div>
+     <div><label class="l">الوحدة</label><div class="unit ${it&&it.sg&&amAdmin()?'sug':''}">${it?esc(it.u):'--'}${it&&it.sg&&amAdmin()?' *':''}</div></div><div></div>
      <div><label class="l">${it&&kindU(it.u)==='a'?'الكمية':'العدد'}</label><input id="r_n" inputmode="decimal" value="${esc(S.n)}"></div>
-     <div><label class="l">الطول (م)</label><input id="r_l" inputmode="decimal" value="${len?esc(S.l):''}" ${len?'':'disabled placeholder="—"'}></div>
+     <div><label class="l">الطول (م)${len?' <b class="req">*</b>':''}</label><input id="r_l" inputmode="decimal" value="${len?esc(S.l):''}" ${len?'':'disabled placeholder="—"'}></div>
      <div class="full" style="display:flex;gap:8px;justify-content:flex-end"><button type="button" class="btn" onclick="QA.closeDlg()">إلغاء</button><button class="btn pri">حفظ التعديل</button></div></form>`);
     const keep=()=>{S.n=$('#r_n').value;if(!$('#r_l').disabled)S.l=$('#r_l').value};
     $('#r_q').oninput=e=>{keep();S.q=e.target.value.trim();render(true)};
@@ -417,8 +517,9 @@ function editRow(idx){
       ev.preventDefault();keep();
       const ni=byCode(S.code);if(!ni){toast('اختر صنفاً');return}
       const n=parseNum(S.n);if(!(n>0)){toast('أدخل عدداً أكبر من صفر');return}
-      const nlen=kindU(ni.u)==='m';let l=nlen?parseNum(S.l):0;if(l===null)l=0;
-      if(isNaN(l)||l<0){toast('الطول غير صالح');return}
+      const nlen=kindU(ni.u)==='m';let l=nlen?parseNum(S.l):0;
+      if(nlen&&!(l>0)){toast(l===null?'أدخل الطول بالمتر — مطلوب لهذا الصنف':'الطول غير صالح');return}
+      if(!nlen)l=0;
       Object.assign(r,{c:ni.c,n:n,l:nlen?l:0,x:snapOf(ni)});
       const dup=rows.findIndex((x,k)=>k!==idx&&x.c===r.c&&(!nlen||+x.l===+r.l));
       if(dup>=0){rows[dup].n=r2(+rows[dup].n+n);rows.splice(idx,1)}
@@ -480,15 +581,31 @@ function delDoor(){
   V.doors.splice(T,1);if(!V.doors.length)V.doors.push({id:uid(),name:'باب 1',rows:[]});
   T=Math.min(T,V.doors.length-1);drawAll();autosave();
 }
+/* الاعتماد: شروط إلزامية تمنع الاعتماد، وتنبيهات يمكن تجاوزها، ثم تأكيد دائماً */
 function markDone(){
-  const iss=issues();
-  if(iss.length&&!confirm('قبل تعليم السند كمكتمل، لاحظ:\n\n• '+iss.join('\n• ')+'\n\nهل تريد تعليمه مكتملاً رغم ذلك؟'))return;
+  if(!V||locked())return;
+  const hard=[],soft=[];
+  const rows=V.doors.reduce((s,d)=>s+d.rows.length,0);
+  const miss=V.doors.reduce((s,d)=>s+d.rows.filter(r=>missingLen(r)).length,0);
+  if(!String(V.mo||'').trim())hard.push('رقم أمر التصنيع (MO) فارغ');
+  if(!rows)hard.push('لا توجد أصناف في السند');
+  if(miss)hard.push(`${miss} سطر من أصناف المتر بلا طول`);
+  const empty=V.doors.filter(d=>!d.rows.length).map(d=>d.name);
+  if(rows&&empty.length)soft.push('أبواب بلا أصناف: '+empty.join('، '));
+  const unk=V.doors.reduce((s,d)=>s+d.rows.filter(r=>info(r).missing).length,0);
+  if(unk)soft.push(`${unk} سطر لأصناف غير موجودة في الكتالوج`);
+  if(hard.length){alert('لا يمكن اعتماد السند قبل إكمال ما يلي:\n\n• '+hard.join('\n• '));return}
+  const msg=(soft.length?'تنبيه:\n• '+soft.join('\n• ')+'\n\n':'')+'الاعتماد يقفل السند'+(amAdmin()?' (يمكنك إعادة فتحه لاحقاً).':'، ولا يمكن تعديله بعدها إلا عن طريق المدير.')+'\n\nهل تريد اعتماد السند؟';
+  if(!confirm(msg))return;
   V.doors.forEach(d=>d.rows.forEach(r=>{const i=byCode(r.c);if(i)r.x=snapOf(i)}));   // تثبيت بيانات الأصناف
-  V.status='done';V.doneAt=Date.now();persist();viewVoucher(V.id);toast('السند مكتمل ومقفل');
+  V.status='done';V.doneAt=Date.now();dirty=true;persist();
+  toast('تم اعتماد السند '+V.no);location.hash='#/list';
 }
+/* إعادة فتح السند المعتمد — للمدير فقط */
 function reopen(){
-  if(!confirm('إعادة فتح السند للتعديل؟ سيعود لاتّباع الكتالوج الحالي حتى تعلّمه مكتملاً مرة أخرى.'))return;
-  V.status='draft';persist();viewVoucher(V.id);
+  if(!V||!amAdmin())return;
+  if(!confirm('إعادة فتح السند للتعديل؟ سيعود «مسودة» ويتبع الكتالوج الحالي حتى يُعتمد مرة أخرى.'))return;
+  VIEWONLY=false;V.status='draft';dirty=true;persist();viewVoucher(V.id);
 }
 function preflight(what){
   const iss=issues();
@@ -558,20 +675,22 @@ function xPage(ws,v,landscape,titleRow){
 }
 async function exportXlsx(){
   if(!window.ExcelJS){toast('مكتبة التصدير غير محمّلة');return}
+  if(isNewV()&&!dirty){toast('السند فارغ — أدخل بياناته أولاً');return}
   if(!preflight('التصدير'))return;
-  await persist();
+  await Promise.race([flush(),sleep(1500)]);      // لا ننتظر طويلاً إن كان الاتصال مقطوعاً
   const v=V,wb=new ExcelJS.Workbook();
   wb.creator='سندات الإنتاج — '+COMPANY;wb.created=new Date();
   let logo=null;try{if(window.QOU_LOGO)logo=wb.addImage({base64:window.QOU_LOGO,extension:'png'})}catch(e){}
   const used=new Set(),who=v.byName||USER.name||USER.email;
   const tot=totals(v),ND=v.doors.length,showPer=ND>1&&ND<=8;
+  const DR=v.status==='done'?'':' (مسودة — غير معتمد)';
 
   /* 1) الملخص */
   const sh=wb.addWorksheet(safeName('الملخص',used));
   const sCols=[6,13,44,11].concat(showPer?v.doors.map(()=>11):[]).concat([14]);
   sCols.forEach((w,k)=>sh.getColumn(k+1).width=w);
   const NS=sCols.length;
-  xHeader(wb,sh,v,Math.max(NS,6),logo,'سند إنتاج — ملخص الكميات',['عدد الأبواب',ND,'أعدّه',who]);
+  xHeader(wb,sh,v,Math.max(NS,6),logo,'سند إنتاج — ملخص الكميات'+DR,['عدد الأبواب',ND,'أعدّه',who]);
   const sHead=['م','الكود','الصنف','الوحدة'].concat(showPer?v.doors.map((d,k)=>'باب '+(k+1)):[]).concat(['الإجمالي']);
   xTableHead(sh,9,sHead);
   tot.forEach((o,k)=>{
@@ -596,7 +715,7 @@ async function exportXlsx(){
   v.doors.forEach((d,di)=>{
     const ws=wb.addWorksheet(safeName(d.name||'باب '+(di+1),used));
     dCols.forEach((w,k)=>ws.getColumn(k+1).width=w);
-    xHeader(wb,ws,v,8,logo,'سند إنتاج — باب '+(di+1),['الباب',d.name||'باب '+(di+1),'أعدّه',who]);
+    xHeader(wb,ws,v,8,logo,'سند إنتاج — باب '+(di+1)+DR,['الباب',d.name||'باب '+(di+1),'أعدّه',who]);
     xTableHead(ws,9,dHead);
     let miss=0;
     numbered(d.rows).forEach(({r,n},k)=>{
@@ -654,14 +773,16 @@ function printHTML(v){
   return `<div class="pv">
    <header class="ph"><img src="img/logo-word.png" alt=""><div class="pt"><div class="t1">سند إنتاج</div><div class="t2">${COMPANY} — قسم الإنتاج</div></div><div class="pno"><span>رقم السند</span><b>${esc(v.no)}</b></div></header>
    <table class="pinfo"><tr><th>رقم MO</th><td class="code">${esc(v.mo||'—')}</td><th>التاريخ</th><td>${esc(v.date||'')}</td><th>الزبون</th><td>${esc(v.customer||'—')}</td></tr>
-   <tr><th>عدد الأبواب</th><td>${ND}</td><th>عدد الأصناف</th><td>${tot.length}</td><th>الحالة</th><td>${v.status==='done'?'مكتمل':'مسودة'}</td></tr></table>
+   <tr><th>عدد الأبواب</th><td>${ND}</td><th>عدد الأصناف</th><td>${tot.length}</td><th>الحالة</th><td>${v.status==='done'?'معتمد':'مسودة — غير معتمد'}</td></tr></table>
+   ${v.status==='done'?'':'<div class="pwm">مسودة — غير معتمد</div><div class="pdraft">مسودة — غير معتمد · لا تُستخدم للإنتاج قبل اعتماد السند</div>'}
    ${sum}${doors}
    <section class="pend"><div class="psig"><div><b>أعدّه</b><span>${esc(who)}</span><i>التوقيع</i></div><div><b>دقّقه</b><span>&nbsp;</span><i>التوقيع</i></div><div><b>اعتمده</b><span>&nbsp;</span><i>التوقيع</i></div></div>
    <div class="pf">طُبع من برنامج سندات الإنتاج — ${new Date().toLocaleString('ar',{dateStyle:'medium',timeStyle:'short'})}</div></section></div>`;
 }
 async function printV(asPdf){
+  if(isNewV()&&!dirty){toast('السند فارغ — أدخل بياناته أولاً');return}
   if(!preflight(asPdf?'حفظ PDF':'الطباعة'))return;
-  await persist();
+  await Promise.race([flush(),sleep(1500)]);
   const pa=$('#printArea');pa.innerHTML=printHTML(V);
   await Promise.all([...pa.querySelectorAll('img')].map(i=>i.decode?i.decode().catch(()=>{}):Promise.resolve()));
   if(document.fonts&&document.fonts.ready)await document.fonts.ready;
@@ -822,6 +943,7 @@ async function adminCreateUser(email,password,name,prefix,role){
 
 /* ---------- النسخ الاحتياطي ---------- */
 function backup(){
+  if(!amAdmin())return;
   const lb=jget(BK(USER.u),0);
   dlg(`<h3>نسخة احتياطية</h3><p style="color:var(--mut);margin-top:0">سنداتك محفوظة أونلاين وتتزامن بين أجهزتك تلقائياً. هذه النسخة أرشيف خارجي إضافي (ملف JSON) يمكن الاحتفاظ به أو استخدامه لاستيراد سندات من ملف قديم.<br>آخر نسخة: <b>${lb?new Date(lb).toLocaleString('ar',{dateStyle:'medium',timeStyle:'short'}):'لا يوجد'}</b></p>
   <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn pri" onclick="QA.expBackup()">تصدير نسخة (ملف JSON)</button>
@@ -857,10 +979,10 @@ function route(){
   if(!AUTH_READY)return;              // ننتظر استجابة Firebase الأولى قبل أي توجيه
   if(!USER){closeVoucher();stopVouchersListener();viewLogin();return}
   const h=location.hash||'#/list';
-  if(V&&h!=='#/v/'+V.id)closeVoucher();
+  if(V&&h!==vHash(V))closeVoucher();
   closeDlg();window.scrollTo(0,0);
   if(h.startsWith('#/v/'))viewVoucher(h.slice(4));
-  else if(h==='#/catalog')viewCatalog();
+  else if(h==='#/catalog'&&amAdmin())viewCatalog();
   else if(h==='#/users')viewUsers();
   else viewList();
 }
@@ -868,7 +990,7 @@ window.addEventListener('hashchange',route);
 
 window.QA={go:h=>{if(location.hash===h)route();else location.hash=h},logout,newV,delV,
   tab:i=>{T=i;drawAll()},addDoor,delDoor,markDone,reopen,
-  save:async()=>{await persist();toast('تم الحفظ')},print:printV,exportX:exportXlsx,
+  saveDraft,editOther,print:printV,exportX:exportXlsx,
   sm:m=>{SM=m;drawPanel()},copyAll:()=>{const t=totals();if(!t.length)return toast('لا أصناف');copyText(t.map(o=>o.c+'\t'+fmt(o.v)).join('\n'),'نُسخ '+t.length+' صنف (الكود والكمية)')},
   editItem,exportCat,resetCat,backup,expBackup,closeDlg,changePw,newUser,adminPwCmd,toggleActive};
 

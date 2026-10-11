@@ -93,6 +93,25 @@ tr.warnrow input[data-f=l]{border-color:#d4a017}
 @media (prefers-color-scheme:dark){.lockbox{background:#1d3a29;border-color:#2f5d41}}
 input:disabled,select:disabled{opacity:.75;cursor:not-allowed}
 
+/* ---------- إرشاد الموظف وحالة الحفظ ---------- */
+tr.clk{cursor:pointer}
+.req{color:var(--bad)}
+.saved{font-weight:700;font-size:13px;padding:4px 12px;border-radius:99px;background:var(--brand-l);color:var(--mut)}
+.saved:empty{display:none}
+.saved.ok,.saved.done{background:#dff1e6;color:var(--ok)}
+.saved.err,.saved.slow{background:var(--bad);color:#fff}
+.saved.ro{background:var(--warn);color:var(--ink)}
+.savebar{background:var(--bad);color:#fff;font-weight:700;border-radius:8px;padding:10px 14px;margin-bottom:12px}
+.steps{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:12px;font-size:13px}
+.step{background:var(--card);border:1px solid var(--line);border-radius:99px;padding:4px 12px;color:var(--mut);font-weight:600}
+.step.ok{background:#dff1e6;border-color:#a9d8bb;color:var(--ok)}
+.steps .arr{color:var(--mut)}
+.unit.st-done{color:var(--ok)}
+.unit.st-new{color:var(--mut);font-weight:600}
+.actions{position:sticky;bottom:0;z-index:4;display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 14px;margin-top:14px;box-shadow:0 -4px 14px #0000001a}
+.actions .sp{flex:1}
+@media (prefers-color-scheme:dark){.saved.ok,.saved.done,.step.ok{background:#1d3a29;color:#8fd1a8;border-color:#2f5d41}}
+
 /* ---------- صفحة الطباعة / PDF ---------- */
 #printArea{display:none}
 @page{size:A4 portrait;margin:12mm 11mm 15mm;
@@ -136,4 +155,6 @@ input:disabled,select:disabled{opacity:.75;cursor:not-allowed}
   .plegend b{color:#721512}
   .ptab td:nth-child(4),.ptab th{white-space:nowrap}
   .pf{margin-top:10px;font-size:7.5pt;color:#9a8f8b;text-align:center}
+  .pwm{position:fixed;top:42%;left:0;right:0;text-align:center;font-size:58pt;font-weight:700;color:rgba(179,38,30,.12);transform:rotate(-28deg);pointer-events:none;z-index:0}
+  .pdraft{border:2px solid #b3261e;color:#b3261e;font-weight:700;text-align:center;padding:4px;margin-bottom:10px;border-radius:6px}
 }
