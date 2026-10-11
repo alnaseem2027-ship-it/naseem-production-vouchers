@@ -205,7 +205,7 @@ function viewList(){
   <div class="card" style="padding:6px 12px;overflow-x:auto"><table><thead><tr><th>رقم السند</th>${isAdmin?'<th>المستخدم</th>':''}<th>MO</th><th>التاريخ</th><th>الزبون</th><th>الأبواب</th><th>الأسطر</th><th>الحالة</th><th>آخر تعديل</th><th></th></tr></thead><tbody>
   ${rows.length?rows.map(v=>{const nl=v.doors.reduce((s,d)=>s+d.rows.length,0);return `<tr><td><b class="code" style="color:var(--ink)">${esc(v.no)}</b></td>${isAdmin?`<td>${esc(v.byName||'')}</td>`:''}<td class="code">${esc(v.mo)}</td><td>${esc(v.date)}</td><td>${esc(v.customer)}</td><td>${v.doors.length}</td><td>${nl}</td>
   <td><span class="badge ${v.status==='done'?'ok':'d'}">${v.status==='done'?'مكتمل 🔒':'مسودة'}</span></td><td>${v.updated?new Date(v.updated).toLocaleString('ar',{dateStyle:'short',timeStyle:'short'}):''}</td>
-  <td style="white-space:nowrap"><button class="btn sm" onclick="QA.go('#/v/${v.id}')">فتح</button> <button class="btn sm" onclick="QA.dupV('${v.id}')">نسخ</button> <button class="btn sm danger" onclick="QA.delV('${v.id}')">حذف</button></td></tr>`}).join(''):`<tr><td colspan="${isAdmin?10:9}" class="empty">${vs.length?'لا نتائج مطابقة.':'لا توجد سندات بعد. اضغط «سند جديد» للبدء.'}</td></tr>`}
+  <td style="white-space:nowrap"><button class="btn sm" onclick="QA.go('#/v/${v.id}')">فتح</button> <button class="btn sm danger" onclick="QA.delV('${v.id}')">حذف</button></td></tr>`}).join(''):`<tr><td colspan="${isAdmin?10:9}" class="empty">${vs.length?'لا نتائج مطابقة.':'لا توجد سندات بعد. اضغط «سند جديد» للبدء.'}</td></tr>`}
   </tbody></table></div></div>`;
   $('#lq').oninput=e=>{listQ=e.target.value;const p=e.target.selectionStart;viewList();const n=$('#lq');n.focus();n.setSelectionRange(p,p)};
 }
@@ -214,14 +214,6 @@ async function newV(){
   VOUCHERS.push(v);
   location.hash='#/v/'+v.id;
   try{await setDoc(doc(db,'vouchers',v.id),v)}catch(e){toast('تعذّر إنشاء السند: '+(e&&e.message||''))}
-}
-async function dupV(id){
-  const s=VOUCHERS.find(v=>v.id===id);if(!s)return;
-  const c=JSON.parse(JSON.stringify(s));
-  Object.assign(c,{id:uid(),no:nextNo(myVouchers()),mo:'',status:'draft',ownerUid:USER.u,by:USER.u,byName:USER.name||USER.email,created:Date.now(),updated:Date.now()});
-  c.doors.forEach(d=>d.id=uid());
-  VOUCHERS.push(c);viewList();
-  try{await setDoc(doc(db,'vouchers',c.id),c);toast('تم نسخ السند برقم '+c.no)}catch(e){toast('تعذّر نسخ السند: '+(e&&e.message||''))}
 }
 async function delV(id){
   const k=VOUCHERS.findIndex(x=>x.id===id);if(k<0)return;
@@ -298,7 +290,7 @@ function drawPanel(){
   if(T==='t'){p.innerHTML=totalsHTML();return}
   const d=V.doors[T],L=locked();
   p.innerHTML=`<div class="doorname"><label class="l" style="margin:0">وصف الباب:</label><input id="dn" value="${esc(d.name)}" ${L?'disabled':''} placeholder="مثال: باب رول بطن (كريم 1013)">
-   ${L?'':`<button class="btn" onclick="QA.dupDoor()">نسخ الباب</button><button class="btn danger" onclick="QA.delDoor()">حذف الباب</button>`}</div>
+   ${L?'':`<button class="btn danger" onclick="QA.delDoor()">حذف الباب</button>`}</div>
    ${L?'':`<div class="entry"><div class="srch"><input id="srch" type="search" placeholder="🔍 ابحث بالاسم أو الكود في كل الأصناف…" value="${esc(ES.q)}"></div><div id="entryRow"></div></div>`}
    <div id="dtable"></div>`;
   if(!L){
@@ -481,7 +473,6 @@ function fallbackCopy(txt,done){const a=document.createElement('textarea');a.val
 
 /* ---------- الأبواب والحالة ---------- */
 function addDoor(){if(locked())return;V.doors.push({id:uid(),name:'باب '+(V.doors.length+1),rows:[]});T=V.doors.length-1;drawAll();autosave()}
-function dupDoor(){if(locked())return;const d=V.doors[T];V.doors.push({id:uid(),name:d.name+' (نسخة)',rows:d.rows.map(r=>JSON.parse(JSON.stringify(r)))});T=V.doors.length-1;drawAll();autosave();toast('تم نسخ الباب')}
 function delDoor(){
   if(locked())return;
   const d=V.doors[T];
@@ -875,8 +866,8 @@ function route(){
 }
 window.addEventListener('hashchange',route);
 
-window.QA={go:h=>{if(location.hash===h)route();else location.hash=h},logout,newV,dupV,delV,
-  tab:i=>{T=i;drawAll()},addDoor,dupDoor,delDoor,markDone,reopen,
+window.QA={go:h=>{if(location.hash===h)route();else location.hash=h},logout,newV,delV,
+  tab:i=>{T=i;drawAll()},addDoor,delDoor,markDone,reopen,
   save:async()=>{await persist();toast('تم الحفظ')},print:printV,exportX:exportXlsx,
   sm:m=>{SM=m;drawPanel()},copyAll:()=>{const t=totals();if(!t.length)return toast('لا أصناف');copyText(t.map(o=>o.c+'\t'+fmt(o.v)).join('\n'),'نُسخ '+t.length+' صنف (الكود والكمية)')},
   editItem,exportCat,resetCat,backup,expBackup,closeDlg,changePw,newUser,adminPwCmd,toggleActive};
