@@ -155,6 +155,9 @@ tr.clk{cursor:pointer}
   .plegend b{color:#721512}
   .ptab td:nth-child(4),.ptab th{white-space:nowrap}
   .pf{margin-top:10px;font-size:7.5pt;color:#9a8f8b;text-align:center}
+  .pdoor{break-before:page;page-break-before:always}
+  .pdhead{display:flex;flex-wrap:wrap;gap:4px 18px;font-size:8.5pt;color:#5a504d;border-bottom:1.5px solid #721512;padding-bottom:5px;margin-bottom:8px}
+  .pdhead b{color:#721512}
   .pwm{position:fixed;top:42%;left:0;right:0;text-align:center;font-size:58pt;font-weight:700;color:rgba(179,38,30,.12);transform:rotate(-28deg);pointer-events:none;z-index:0}
   .pdraft{border:2px solid #b3261e;color:#b3261e;font-weight:700;text-align:center;padding:4px;margin-bottom:10px;border-radius:6px}
 }

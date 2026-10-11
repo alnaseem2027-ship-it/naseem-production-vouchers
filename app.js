@@ -95,8 +95,15 @@ function nextNo(vs){
   return p+String(mx+1).padStart(4,'0');
 }
 
+let unsubMe=null;
 function startVouchersListener(){
   if(unsubVouchers){unsubVouchers();unsubVouchers=null}
+  /* اسم المستخدم الحالي لحظياً: إن غيّره المدير يُستخدم الاسم الجديد فوراً في السندات */
+  if(unsubMe){unsubMe();unsubMe=null}
+  unsubMe=onSnapshot(doc(db,'users',USER.u),s=>{
+    const d=s.exists()?s.data():null;
+    if(d&&d.name&&USER&&d.name!==USER.name){USER.name=d.name;if(NEWV)NEWV.byName=d.name;if(location.hash==='#/list'&&!V)viewList()}
+  },()=>{});
   VOUCHERS=[];
   const qy=USER.role==='admin'?query(vouchersCol):query(vouchersCol,where('ownerUid','==',USER.u));
   unsubVouchers=onSnapshot(qy,snap=>{
@@ -111,7 +118,7 @@ function startVouchersListener(){
     }
   },err=>{toast('تعذّر مزامنة السندات: '+(err&&err.message||''))});
 }
-function stopVouchersListener(){if(unsubVouchers){unsubVouchers();unsubVouchers=null}VOUCHERS=[]}
+function stopVouchersListener(){if(unsubVouchers){unsubVouchers();unsubVouchers=null}if(unsubMe){unsubMe();unsubMe=null}VOUCHERS=[]}
 
 /* ---------- واجهة عامة ---------- */
 let toastT=null;
@@ -196,17 +203,21 @@ function changePw(){
 
 /* ---------- قائمة السندات ---------- */
 let listQ='';
+/* ما يظهر في القائمة حالياً (بعد البحث) — يستخدمه العرض والتصدير */
+function listRows(){
+  const q=listQ.trim().toLowerCase();
+  return loadV().sort((a,b)=>(b.updated||0)-(a.updated||0)).filter(v=>!q||(`${v.no} ${v.mo} ${v.customer} ${v.byName||''}`).toLowerCase().includes(q));
+}
 function viewList(){
   document.title='السندات — سندات الإنتاج';
   const isAdmin=USER.role==='admin';
-  const vs=loadV().sort((a,b)=>(b.updated||0)-(a.updated||0));
-  const q=listQ.trim().toLowerCase();
-  const rows=vs.filter(v=>!q||(`${v.no} ${v.mo} ${v.customer} ${v.byName||''}`).toLowerCase().includes(q));
+  const vs=loadV(),rows=listRows();
   const lb=jget(BK(USER.u),0),stale=isAdmin&&vs.length&&(Date.now()-lb>7*864e5);
   $('#app').innerHTML=header()+`<div class="wrap">
   ${stale?`<div class="note warnbox">${lb?'مرّ أكثر من أسبوع على آخر نسخة احتياطية.':'لم تُصدَّر أي نسخة احتياطية بعد.'} السندات محفوظة أونلاين، لكن النسخة الاحتياطية تبقى مفيدة كأرشيف خارجي. <button class="btn sm" onclick="QA.expBackup()">صدّر نسخة الآن</button></div>`:''}
   <div class="bar"><h2 style="margin:0">السندات</h2><span class="sp"></span>
   <input type="search" id="lq" placeholder="🔍 بحث برقم السند أو MO أو الزبون${isAdmin?' أو المستخدم':''}" style="max-width:320px" value="${esc(listQ)}">
+  ${isAdmin?'<button class="btn" onclick="QA.exportAll()">تصدير Excel</button>':''}
   <button class="btn pri" onclick="QA.newV()">+ سند جديد</button></div>
   <div class="card" style="padding:6px 12px;overflow-x:auto"><table><thead><tr><th>رقم السند</th>${isAdmin?'<th>المستخدم</th>':''}<th>MO</th><th>التاريخ</th><th>الزبون</th><th>الأبواب</th><th>الأسطر</th><th>الحالة</th><th>آخر تعديل</th><th></th></tr></thead><tbody>
   ${rows.length?rows.map(v=>{const nl=v.doors.reduce((s,d)=>s+d.rows.length,0);return `<tr class="clk" onclick="QA.go('#/v/${v.id}')"><td><b class="code" style="color:var(--ink)">${esc(v.no)}</b></td>${isAdmin?`<td>${esc(v.byName||'')}</td>`:''}<td class="code">${esc(v.mo)}</td><td>${esc(v.date)}</td><td>${esc(v.customer)}</td><td>${v.doors.length}</td><td>${nl}</td>
@@ -274,6 +285,7 @@ async function persist(){
     }
   }
   v.updated=Date.now();v.ownerUid=VOWNERUID;
+  if(VOWNERUID===USER.u&&USER.name)v.byName=USER.name;
   dirty=false;setSave('saving');
   const slow=setTimeout(()=>{if(V===v)setSave('slow')},6000);
   try{
@@ -332,7 +344,7 @@ function viewVoucher(id){
   document.title=(NEW?'سند جديد':'سند '+V.no)+' — سندات الإنتاج';
   $('#app').innerHTML=header()+`<div class="wrap">
   <div class="bar"><button class="btn" onclick="QA.go('#/list')">→ السندات</button><span class="saved" id="saved"></span><span class="sp"></span>
-   ${ADM&&V.byName?`<span class="chip">صاحب السند: ${esc(V.byName)}</span>`:''}
+   <span class="chip">أعدّه: ${esc(V.byName||USER.name||'')}</span>
    <button class="btn" onclick="QA.print(false)">طباعة</button><button class="btn" onclick="QA.print(true)">PDF</button><button class="btn" onclick="QA.exportX()">تصدير Excel</button></div>
   <div class="savebar" id="savebar" hidden></div>
   ${done?`<div class="note lockbox">🔒 هذا السند <b>معتمد ومقفل</b>. بياناته ثابتة ولا تتأثر بتعديل الكتالوج. ${ADM?`<button class="btn sm" onclick="QA.reopen()">إعادة فتح للتعديل</button>`:'لتعديله تواصل مع المدير.'}</div>`
@@ -759,6 +771,64 @@ function download(blob,name){
   setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},2000);
 }
 
+/* ---------- تصدير كل السندات (للمدير) ----------
+   يصدّر ما يظهر في القائمة حالياً (بعد البحث) إلى ملف واحد بثلاث أوراق. */
+function exportAll(){
+  if(!amAdmin())return;
+  const rows=listRows();
+  if(!rows.length){toast('لا توجد سندات للتصدير');return}
+  const nd=rows.filter(v=>v.status==='done').length;
+  dlg(`<h3>تصدير السندات إلى Excel</h3>
+   <p style="color:var(--mut);margin-top:0">${listQ.trim()?'سيُصدَّر ما يظهر في القائمة حسب البحث الحالي':'سيُصدَّر كل ما في القائمة'} (${rows.length} سند).<br>الملف فيه ثلاث أوراق: «السندات»، «التفاصيل» (سطر لكل صنف)، «إجمالي الأصناف».</p>
+   <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end"><button class="btn" onclick="QA.closeDlg()">إلغاء</button>
+   <button class="btn" ${nd?'':'disabled'} onclick="QA.doExportAll(true)">المعتمدة فقط (${nd})</button>
+   <button class="btn pri" onclick="QA.doExportAll(false)">كل السندات (${rows.length})</button></div>`);
+}
+async function doExportAll(onlyDone){
+  closeDlg();
+  if(!window.ExcelJS){toast('مكتبة التصدير غير محمّلة');return}
+  const vs=listRows().filter(v=>!onlyDone||v.status==='done')
+    .sort((a,b)=>String(a.date||'').localeCompare(String(b.date||''))||String(a.no).localeCompare(String(b.no),undefined,{numeric:true}));
+  if(!vs.length){toast('لا توجد سندات للتصدير');return}
+  const wb=new ExcelJS.Workbook();wb.creator='سندات الإنتاج — '+COMPANY;wb.created=new Date();
+  const st=v=>v.status==='done'?'معتمد':'مسودة';
+  const sheet=(name,labels,widths)=>{
+    const ws=wb.addWorksheet(name,{views:[{rightToLeft:true,state:'frozen',ySplit:1}]});
+    ws.addRow(labels);widths.forEach((w,k)=>ws.getColumn(k+1).width=w);
+    const h=ws.getRow(1);h.height=24;
+    h.eachCell(c=>{c.font={name:FONT,size:10,bold:true,color:{argb:'FFFFFFFF'}};c.fill={type:'pattern',pattern:'solid',fgColor:{argb:XC.brand}};c.alignment={horizontal:'center',vertical:'middle',wrapText:true};c.border=BOX});
+    ws.autoFilter={from:{row:1,column:1},to:{row:1,column:labels.length}};
+    ws.pageSetup={paperSize:9,orientation:'landscape',fitToPage:true,fitToWidth:1,fitToHeight:0,printTitlesRow:'1:1',margins:{left:0.3,right:0.3,top:0.4,bottom:0.5,header:0.2,footer:0.25}};
+    ws.headerFooter={oddFooter:'&L&8'+COMPANY+'&C&8&P / &N&R&8'+name};
+    return ws;
+  };
+  const body=(row,k)=>row.eachCell({includeEmpty:true},c=>{c.font={name:FONT,size:10};c.border=BOX;c.alignment={vertical:'middle',horizontal:'right'};if(k%2)c.fill={type:'pattern',pattern:'solid',fgColor:{argb:XC.zebra}}});
+  /* 1) السندات */
+  const s1=sheet('السندات',['رقم السند','MO','التاريخ','الزبون','أعدّه','الحالة','عدد الأبواب','عدد الأسطر','آخر تعديل'],[13,16,12,30,22,10,11,11,18]);
+  vs.forEach((v,k)=>{
+    const r=s1.addRow([v.no,v.mo||'',v.date||'',v.customer||'',v.byName||'',st(v),v.doors.length,v.doors.reduce((s,d)=>s+d.rows.length,0),v.updated?new Date(v.updated):null]);
+    body(r,k);r.getCell(9).numFmt='yyyy-mm-dd hh:mm';[6,7,8].forEach(c=>r.getCell(c).alignment={horizontal:'center',vertical:'middle'});
+  });
+  /* 2) التفاصيل + تجميع الإجمالي */
+  const s2=sheet('التفاصيل',['رقم السند','MO','التاريخ','الزبون','أعدّه','الحالة','الباب','الكود','اسم الصنف','ملحق الاسم','الوحدة','العدد','الطول (م)','الكمية'],[12,15,11,24,18,9,24,12,28,24,10,8,9,11]);
+  const agg=new Map();let k2=0;
+  vs.forEach(v=>v.doors.forEach((d,di)=>d.rows.forEach(r=>{
+    const x=info(r,v),len=kindU(x.u)==='m',q=qtyOf(r,v);
+    const row=s2.addRow([v.no,v.mo||'',v.date||'',v.customer||'',v.byName||'',st(v),d.name||('باب '+(di+1)),String(r.c),x.n,x.s||'',x.u,+r.n,len?(+r.l||0):null,q]);
+    body(row,k2++);row.getCell(8).numFmt='@';row.getCell(13).numFmt='#,##0.00';row.getCell(14).numFmt='#,##0.00';row.getCell(14).font={name:FONT,size:10,bold:true};
+    const a=agg.get(r.c)||{c:r.c,x,q:0,vs:new Set()};a.q+=q;a.vs.add(v.id);agg.set(r.c,a);
+  })));
+  /* 3) إجمالي الأصناف */
+  const s3=sheet('إجمالي الأصناف',['الكود','اسم الصنف','ملحق الاسم','الوحدة','الكمية الإجمالية','عدد السندات'],[13,32,28,10,16,12]);
+  [...agg.values()].sort((a,b)=>String(a.c).localeCompare(String(b.c),undefined,{numeric:true})).forEach((a,k)=>{
+    const r=s3.addRow([String(a.c),a.x.n,a.x.s||'',a.x.u,r2(a.q),a.vs.size]);
+    body(r,k);r.getCell(1).numFmt='@';r.getCell(5).numFmt='#,##0.00';r.getCell(5).font={name:FONT,size:10,bold:true};
+  });
+  const buf=await wb.xlsx.writeBuffer();
+  download(new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),'سندات الإنتاج '+today()+(onlyDone?' - المعتمدة':'')+'.xlsx');
+  toast('تم تصدير '+vs.length+' سند');
+}
+
 /* ---------- الطباعة و PDF ---------- */
 function printHTML(v){
   const who=v.byName||USER.name||USER.email;
@@ -767,7 +837,7 @@ function printHTML(v){
     ${tot.map(o=>`<tr><td class="c">${o.n}</td><td class="code">${esc(o.c)}</td><td>${esc(labelOf(o.x))}</td><td class="c">${esc(o.x.u)}</td>${showPer?o.per.map(q=>`<td class="c n">${q?fmt(q):'–'}</td>`).join(''):''}<td class="c n tot">${fmt(o.v)}</td></tr>`).join('')||`<tr><td colspan="9" class="c">لا أصناف</td></tr>`}</tbody></table>${showPer?`<div class="plegend">${v.doors.map((d,k)=>`<span><b>باب ${k+1}:</b> ${esc(d.name||'باب '+(k+1))}</span>`).join('')}</div>`:''}</section>`;
   const doors=v.doors.map((d,di)=>{
     const miss=d.rows.filter(r=>missingLen(r,v)).length;
-    return `<section class="psec"><h3>باب ${di+1}: ${esc(d.name||'')} <span>${d.rows.length} سطر${miss?` · ⚠ ${miss} بلا طول`:''}</span></h3><table class="ptab"><thead><tr><th class="c">م</th><th>الكود</th><th>اسم الصنف</th><th>ملحق الاسم</th><th class="c">الوحدة</th><th class="c n">العدد</th><th class="c n">الطول (م)</th><th class="c n">الكمية</th></tr></thead><tbody>
+    return `<section class="psec pdoor"><div class="pdhead"><span>سند <b>${esc(v.no)}</b></span><span>MO <b>${esc(v.mo||'—')}</b></span><span>${esc(v.date||'')}</span><span>${esc(v.customer||'')}</span><span>باب ${di+1} من ${ND}</span></div><h3>باب ${di+1}: ${esc(d.name||'')} <span>${d.rows.length} سطر${miss?` · ⚠ ${miss} بلا طول`:''}</span></h3><table class="ptab"><thead><tr><th class="c">م</th><th>الكود</th><th>اسم الصنف</th><th>ملحق الاسم</th><th class="c">الوحدة</th><th class="c n">العدد</th><th class="c n">الطول (م)</th><th class="c n">الكمية</th></tr></thead><tbody>
     ${numbered(d.rows).map(({r,n})=>{const x=info(r,v),len=kindU(x.u)==='m',ml=len&&!(+r.l>0);return `<tr class="${ml?'pw':''}"><td class="c">${n}</td><td class="code">${esc(r.c)}</td><td>${esc(x.n)}</td><td class="mut">${esc(x.s)}</td><td class="c">${esc(x.u)}</td><td class="c n">${fmt(r.n)}</td><td class="c n">${len?(ml?'—':fmt(r.l)):'<span class="mut">—</span>'}</td><td class="c n tot">${fmt(qtyOf(r,v))}</td></tr>`}).join('')||'<tr><td colspan="8" class="c">لا أصناف</td></tr>'}</tbody></table></section>`;
   }).join('');
   return `<div class="pv">
@@ -849,6 +919,7 @@ async function exportCat(){
 function resetCat(){if(!confirm('إلغاء كل تعديلاتك على الكتالوج في هذا المتصفح؟'))return;try{localStorage.removeItem(CK)}catch(e){}catReset();viewCatalog();toast('تمت إعادة الكتالوج الأساسي')}
 
 /* ---------- لوحة المستخدمين (للمدير فقط) ---------- */
+let USERS_CACHE={};
 async function viewUsers(){
   if(USER.role!=='admin'){location.hash='#/list';return}
   document.title='المستخدمون — سندات الإنتاج';
@@ -858,6 +929,7 @@ async function viewUsers(){
   let snap;
   try{snap=await getDocs(usersCol)}catch(e){$('#utbl').textContent='تعذّر تحميل المستخدمين: '+(e&&e.message||'');return}
   const rows=snap.docs.map(d=>Object.assign({uid:d.id},d.data()));
+  USERS_CACHE={};rows.forEach(u=>USERS_CACHE[u.uid]=u);
   $('#utbl').innerHTML=`<table><thead><tr><th>الاسم</th><th>الدور</th><th>بادئة رقم السند</th><th>البريد</th><th>الحالة</th><th></th></tr></thead><tbody>
   ${rows.map(u=>{
     const active=u.active!==false;
@@ -865,6 +937,7 @@ async function viewUsers(){
     return `<tr><td>${esc(u.name||'')}</td><td><span class="badge ${u.role==='admin'?'ok':'d'}">${u.role==='admin'?'مدير':'مستخدم'}</span></td><td class="code">${esc(u.prefix||'')}</td><td class="code" style="direction:ltr;text-align:right">${esc(u.email||'—')}</td>
     <td><span class="badge ${active?'ok':'d'}">${active?'نشط':'موقوف'}</span></td>
     <td style="white-space:nowrap;display:flex;gap:6px">
+     <button class="btn sm" onclick="QA.renameUser('${u.uid}')">تعديل الاسم</button>
      <button class="btn sm" onclick="QA.adminPwCmd('${u.uid}','${esc(u.email||'')}','${esc(u.name||u.email||'')}')">كلمة المرور</button>
      ${self?'':`<button class="btn sm" onclick="QA.toggleActive('${u.uid}','${esc(u.name||u.email||'')}',${active})">${active?'إيقاف':'تفعيل'}</button>`}
     </td></tr>`;
@@ -882,6 +955,31 @@ async function toggleActive(targetUid,label,currentlyActive){
     toast(next?'تم تفعيل الحساب':'تم إيقاف الحساب');
     viewUsers();
   }catch(err){alert('تعذّر: '+(err&&err.message||''))}
+}
+/* تعديل الاسم الظاهر للمستخدم — يظهر في السندات في خانة «أعدّه»،
+   ويُحدَّث أيضاً في كل سنداته السابقة. */
+function renameUser(uid){
+  const u=USERS_CACHE[uid];if(!u)return;
+  dlg(`<h3>تعديل اسم: ${esc(u.name||u.email||'')}</h3><form id="rnf" class="grid2">
+   <div class="full"><label class="l">الاسم الكامل كما يظهر في السندات («أعدّه»)</label><input id="rn_name" required value="${esc(u.name||'')}"></div>
+   <div class="full" style="color:var(--mut);font-size:13px">سيتحدّث الاسم أيضاً في كل السندات السابقة لهذا المستخدم.</div>
+   <div class="err full" id="rn_err"></div>
+   <div class="full" style="display:flex;gap:8px;justify-content:flex-end"><button type="button" class="btn" onclick="QA.closeDlg()">إلغاء</button><button class="btn pri" id="rn_ok">حفظ</button></div></form>`);
+  $('#rnf').onsubmit=async e=>{
+    e.preventDefault();
+    const name=$('#rn_name').value.trim();if(!name){$('#rn_err').textContent='اكتب الاسم';return}
+    $('#rn_ok').disabled=true;$('#rn_err').textContent='جارٍ الحفظ…';
+    try{
+      await setDoc(doc(db,'users',uid),{name},{merge:true});
+      const list=VOUCHERS.filter(v=>v.ownerUid===uid&&v.byName!==name);
+      let ok=0,fail=0;
+      for(const v of list){
+        try{await setDoc(doc(db,'vouchers',v.id),{byName:name},{merge:true});v.byName=name;ok++}catch(err){fail++}
+      }
+      if(uid===USER.u)USER.name=name;
+      closeDlg();toast('تم تغيير الاسم'+(ok?` وتحديثه في ${ok} سند`:'')+(fail?` — تعذّر تحديث ${fail}`:''),null,4000);viewUsers();
+    }catch(err){$('#rn_ok').disabled=false;$('#rn_err').textContent='تعذّر الحفظ: '+(err&&err.message||'')}
+  };
 }
 /* تغيير كلمة مرور مستخدم آخر يحتاج صلاحيات Admin SDK، وهذه لا تتوفر من المتصفح بأمان
    بدون خادم (Vercel/Cloud Functions)، وقد تقرّر الاستغناء عن كليهما. البديل: أداة سطر أوامر
@@ -992,7 +1090,7 @@ window.QA={go:h=>{if(location.hash===h)route();else location.hash=h},logout,newV
   tab:i=>{T=i;drawAll()},addDoor,delDoor,markDone,reopen,
   saveDraft,editOther,print:printV,exportX:exportXlsx,
   sm:m=>{SM=m;drawPanel()},copyAll:()=>{const t=totals();if(!t.length)return toast('لا أصناف');copyText(t.map(o=>o.c+'\t'+fmt(o.v)).join('\n'),'نُسخ '+t.length+' صنف (الكود والكمية)')},
-  editItem,exportCat,resetCat,backup,expBackup,closeDlg,changePw,newUser,adminPwCmd,toggleActive};
+  editItem,exportCat,resetCat,backup,expBackup,closeDlg,changePw,newUser,adminPwCmd,toggleActive,renameUser,exportAll,doExportAll};
 
 /* ---------- حالة الدخول (Firebase Auth) ---------- */
 onAuthStateChanged(auth,async fbUser=>{
