@@ -158,6 +158,7 @@ function viewLogin(busy,err){
 function loginErr(err){
   const c=err&&err.code||'';
   if(c==='auth/invalid-credential'||c==='auth/wrong-password'||c==='auth/user-not-found')return 'اسم المستخدم أو كلمة المرور غير صحيحة';
+  if(c==='auth/user-disabled')return 'هذا الحساب موقوف. تواصل مع المدير.';
   if(c==='auth/too-many-requests')return 'محاولات كثيرة متتالية — انتظر قليلاً ثم أعد المحاولة';
   if(c==='auth/network-request-failed')return 'تعذّر الاتصال بالإنترنت';
   return 'تعذّر تسجيل الدخول: '+(err&&err.message||'');
@@ -745,9 +746,51 @@ async function viewUsers(){
   let snap;
   try{snap=await getDocs(usersCol)}catch(e){$('#utbl').textContent='تعذّر تحميل المستخدمين: '+(e&&e.message||'');return}
   const rows=snap.docs.map(d=>Object.assign({uid:d.id},d.data()));
-  $('#utbl').innerHTML=`<table><thead><tr><th>الاسم</th><th>الدور</th><th>بادئة رقم السند</th><th>البريد</th></tr></thead><tbody>
-  ${rows.map(u=>`<tr><td>${esc(u.name||'')}</td><td><span class="badge ${u.role==='admin'?'ok':'d'}">${u.role==='admin'?'مدير':'مستخدم'}</span></td><td class="code">${esc(u.prefix||'')}</td><td class="code" style="direction:ltr;text-align:right">${esc(u.email||'—')}</td></tr>`).join('')||'<tr><td colspan="4" class="empty">لا يوجد مستخدمون.</td></tr>'}
+  $('#utbl').innerHTML=`<table><thead><tr><th>الاسم</th><th>الدور</th><th>بادئة رقم السند</th><th>البريد</th><th>الحالة</th><th></th></tr></thead><tbody>
+  ${rows.map(u=>{
+    const active=u.active!==false;
+    const self=u.uid===USER.u;
+    return `<tr><td>${esc(u.name||'')}</td><td><span class="badge ${u.role==='admin'?'ok':'d'}">${u.role==='admin'?'مدير':'مستخدم'}</span></td><td class="code">${esc(u.prefix||'')}</td><td class="code" style="direction:ltr;text-align:right">${esc(u.email||'—')}</td>
+    <td><span class="badge ${active?'ok':'d'}">${active?'نشط':'موقوف'}</span></td>
+    <td style="white-space:nowrap;display:flex;gap:6px">
+     <button class="btn sm" onclick="QA.adminPwCmd('${u.uid}','${esc(u.email||'')}','${esc(u.name||u.email||'')}')">كلمة المرور</button>
+     ${self?'':`<button class="btn sm" onclick="QA.toggleActive('${u.uid}','${esc(u.name||u.email||'')}',${active})">${active?'إيقاف':'تفعيل'}</button>`}
+    </td></tr>`;
+  }).join('')||'<tr><td colspan="6" class="empty">لا يوجد مستخدمون.</td></tr>'}
   </tbody></table>`;
+}
+/* تفعيل/إيقاف حساب مستخدم — تُحفَظ الحالة في Firestore مباشرة (بدون خادم)،
+   وقواعد أمان Firestore هي من تمنع فعلياً أي قراءة/كتابة لسندات الحساب الموقوف،
+   كما أن onAuthStateChanged يسجّل خروج أي حساب موقوف فور اكتشافه عند الدخول. */
+async function toggleActive(targetUid,label,currentlyActive){
+  const next=!currentlyActive;
+  if(!confirm((next?'تفعيل':'إيقاف')+' حساب '+label+'؟'))return;
+  try{
+    await setDoc(doc(db,'users',targetUid),{active:next},{merge:true});
+    toast(next?'تم تفعيل الحساب':'تم إيقاف الحساب');
+    viewUsers();
+  }catch(err){alert('تعذّر: '+(err&&err.message||''))}
+}
+/* تغيير كلمة مرور مستخدم آخر يحتاج صلاحيات Admin SDK، وهذه لا تتوفر من المتصفح بأمان
+   بدون خادم (Vercel/Cloud Functions)، وقد تقرّر الاستغناء عن كليهما. البديل: أداة سطر أوامر
+   صغيرة (admin-tools) تشغّلها من جهازك عند الحاجة فقط — مجانية تماماً ولا تحتاج استضافة.
+   هذه النافذة تجهّز لك الأمر الجاهز للنسخ. */
+function adminPwCmd(targetUid,email,label){
+  dlg(`<h3>تغيير كلمة مرور: ${esc(label)}</h3>
+   <div style="color:var(--mut);font-size:13px;margin-bottom:10px">هذا يتطلب تشغيل أمر من جهازك مرة واحدة (أداة <code>admin-tools</code> المرفقة مع المشروع) — لا يمكن تنفيذه من المتصفح مباشرة.</div>
+   <form id="apf" class="grid2">
+   <div class="full"><label class="l">كلمة المرور الجديدة (٦ أحرف على الأقل)</label><input id="ap_new" type="password" required minlength="6" autocomplete="new-password"></div>
+   <div class="full"><label class="l">الأمر (انسخه وشغّله من مجلد المشروع)</label>
+    <textarea id="ap_cmd" readonly style="width:100%;min-height:70px;direction:ltr;text-align:left;font-family:monospace;font-size:12px" placeholder="اكتب كلمة المرور أعلاه أولاً"></textarea></div>
+   <div class="full" style="display:flex;gap:8px;justify-content:flex-end">
+    <button type="button" class="btn" onclick="QA.closeDlg()">إغلاق</button>
+    <button type="button" class="btn pri" id="ap_copy">نسخ الأمر</button></div></form>`);
+  const upd=()=>{
+    const pw=$('#ap_new').value;
+    $('#ap_cmd').value=pw?`node admin-tools/manage-users.js set-password "${email}" "${pw.replace(/"/g,'\\"')}"`:'';
+  };
+  $('#ap_new').oninput=upd;upd();
+  $('#ap_copy').onclick=()=>{const t=$('#ap_cmd');if(!t.value){toast('اكتب كلمة المرور أولاً');return}t.select();copyText(t.value,'نُسخ الأمر — شغّله من جهازك')};
 }
 function newUser(){
   dlg(`<h3>مستخدم جديد</h3><form id="uf" class="grid2">
@@ -782,7 +825,7 @@ async function adminCreateUser(email,password,name,prefix,role){
     try{await signOutSecondary(secAuth)}catch(e){}
     try{await deleteApp(sec)}catch(e){}
   }
-  await setDoc(doc(db,'users',newUid),{role,name,prefix,email});
+  await setDoc(doc(db,'users',newUid),{role,name,prefix,email,active:true});
   return newUid;
 }
 
@@ -836,7 +879,7 @@ window.QA={go:h=>{if(location.hash===h)route();else location.hash=h},logout,newV
   tab:i=>{T=i;drawAll()},addDoor,dupDoor,delDoor,markDone,reopen,
   save:async()=>{await persist();toast('تم الحفظ')},print:printV,exportX:exportXlsx,
   sm:m=>{SM=m;drawPanel()},copyAll:()=>{const t=totals();if(!t.length)return toast('لا أصناف');copyText(t.map(o=>o.c+'\t'+fmt(o.v)).join('\n'),'نُسخ '+t.length+' صنف (الكود والكمية)')},
-  editItem,exportCat,resetCat,backup,expBackup,closeDlg,changePw,newUser};
+  editItem,exportCat,resetCat,backup,expBackup,closeDlg,changePw,newUser,adminPwCmd,toggleActive};
 
 /* ---------- حالة الدخول (Firebase Auth) ---------- */
 onAuthStateChanged(auth,async fbUser=>{
@@ -848,6 +891,10 @@ onAuthStateChanged(auth,async fbUser=>{
       AUTH_READY=true;viewLogin(false,'هذا الحساب غير مُفعَّل في النظام. تواصل مع المدير.');return;
     }
     const ud=udoc.data();
+    if(ud.active===false){
+      await signOut(auth);
+      AUTH_READY=true;viewLogin(false,'هذا الحساب موقوف. تواصل مع المدير.');return;
+    }
     USER={u:fbUser.uid,email:fbUser.email,name:ud.name||fbUser.email,prefix:ud.prefix||'A',role:ud.role||'user'};
     startVouchersListener();
     AUTH_READY=true;

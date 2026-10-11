@@ -1,2 +1,4 @@
 نماذج/
 *.log
+admin-tools/node_modules/
+admin-tools/serviceAccountKey.json

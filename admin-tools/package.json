@@ -1,0 +1,9 @@
+{
+  "name": "naseem-admin-tools",
+  "private": true,
+  "version": "1.0.0",
+  "description": "أداة محلية (غير مستضافة) لتغيير كلمة مرور المستخدمين وتعطيل/تفعيل حساباتهم عبر Firebase Admin SDK",
+  "dependencies": {
+    "firebase-admin": "^12.6.0"
+  }
+}
